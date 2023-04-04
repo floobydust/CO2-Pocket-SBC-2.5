@@ -1,0 +1,511 @@
+  Tue Sep 27 2022  2:10                                                                                                    Page 1
+
+
+                                               ***************************************
+                                               **      WDC 65C02 Macro Assembler    **
+                                               **                                   **
+                                               **     Version 3.49.1- Feb  6 2006    **
+                                               ***************************************
+
+     1                        ;*************************************************************************************************
+     2                                PL      66      ;Page Length
+     3                                PW      132     ;Page Width (# of char/line)
+     4                                CASE    OFF     ;Ignore upper vs lower case for labels, etc.
+     5                                CHIP    W65C02S ;Enable WDC 65C02 instructions
+     6                                PASS1   OFF     ;Set ON when used for debug
+     7                                INCLIST ON      ;Set ON for listing Include files
+     8                        ;*************************************************************************************************
+     9                        ;MAKECOM
+    10                        ;convert .KIM files to .COM files for dos/65
+    11                        ;version 2.02-A
+    12                        ;released:      25 september 1982
+    13                        ;last revision:
+    14                        ;       27 march 2008
+    15                        ;               eliminated page zero 0 & 1
+    16                        ;               reformatted for TASM & ASM210
+    17                        ;       2 april 2008
+    18                        ;               corrected error in page zero addressing
+    19                        ;               put com buffer on page boundary
+    20                        ;               added missing '
+    21                        ;read kim format object code files and generate
+    22                        ;executable command (com) file beginning at tea.
+    23                        ;conversion is terminated by eof char, zero
+    24                        ;length record, $ char or physical eof.  records must be
+    25                        ;monotonically increasing but may have gaps.
+    26                        ;any gaps are filled with zeros. upon entry
+    27                        ;file type is or is assumed to be "kim".
+    28                        ;base addresses
+    29             00000100   boot    .EQU    $100            ;warm boot
+    30             00000103   pem     .EQU    $103            ;pem entry point
+    31             00000107   dflfcb  .EQU    $107            ;source fcb
+    32             00000128   dflbuf  .EQU    $128            ;source buffer
+    33             00000800   tea     .EQU    $800            ;tea start
+    34             00000030   PZSTRT  .EQU    $30
+    35                        ;fixed parameters
+    36             00000000   null    .EQU    0               ;null
+    37             0000000A   lf      .EQU    10              ;linefeed $a
+    38             0000000D   cr      .EQU    13              ;return $d
+    39             0000001A   eof     .EQU    26              ;end of file $1a
+    40             0000003B   semico  .EQU    59              ;semicolon $3b
+    41                        
+    42                                PAGE0
+    43                        ;page zero variables
+    44                                .ORG     PZSTRT
+    45                        ;zero page storage - start at 2 for C64 & 128 compatibility
+    46                        
+    47 00:0030:              kimpnt  DEFS    1               ;kim record index
+    48                        
+    49 00:0031:              compnt  DEFS    2               ;com record pointer
+    50                        
+    51 00:0033:              curent  DEFS    2               ;current com pc
+    52                        
+    53 00:0035:              start   DEFS    2               ;current kim start
+    54                        
+    55 00:0037:              count   DEFS    1               ;current record byte count
+    56                        
+    57 00:0038:              bytes   DEFS    2               ;number bytes read
+  Tue Sep 27 2022  2:10                                                                                                    Page 2
+
+
+    58                        
+    59 00:003A:              record  DEFS    2               ;number records read
+    60                        
+    61 00:003C:              number  DEFS    1               ;byte assembly buffer
+    62                        
+    63 00:003D:              commax  DEFS    2               ;max com pointer
+    64                        
+    65                        ;put .COM fcb outside area subject to PEM saves
+    66 00:003F:                      DEFS    32
+    67                        
+    68 00:005F:              comfcb  DEFS    33              ;com fcb
+    69                        
+    70                        lastzp
+    71                        
+    72 00:0080:                      ENDS
+    73                        
+    74                                CODE
+    75                        ;main program
+    76                                .ORG    tea
+    77 00:0800: 80 25                BRA     load            ;go execute
+    78 00:0802: 43 4F 50 59          .DB     "COPYRIGHT (C) 2008 -"
+       00:0806: 52 49 47 48 
+       00:080A: 54 20 28 43 
+       00:080E: 29 20 32 30 
+       00:0812: 30 38 20 2D 
+    79 00:0816: 20 52 49 43          .DB     " RICHARD A. LEARY"
+       00:081A: 48 41 52 44 
+       00:081E: 20 41 2E 20 
+       00:0822: 4C 45 41 52 
+       00:0826: 59 
+    80                        ;first clear page zero including .COM fcb
+    81 00:0827: A2 7F        load    ldx     #lastzp-1       ;set index to max
+    82 00:0829: A9 00                lda     #0              ;clear accum
+    83 00:082B: 95 00        clrmre  sta     0,x             ;clear
+    84 00:082D: CA                   dex                     ;drop index
+    85 00:082E: E0 01                cpx     #1              ;if more
+    86 00:0830: D0 F9                bne     clrmre          ;loop
+    87                        ;start .COM file build at TEA
+    88 00:0832: A9 00                lda     #<tea           ;set current
+    89 00:0834: 85 33                sta     curent          ;to tea
+    90 00:0836: A0 08                ldy     #>tea           ;both low
+    91 00:0838: 84 34                sty     curent+1        ;and high
+    92                        ;calculate maximum .COM file buffer length
+    93 00:083A: 38                   sec                     ;set carry
+    94 00:083B: AD 04 01             lda     pem+1           ;get pem
+    95 00:083E: AC 05 01             ldy     pem+2           ;destination
+    96 00:0841: E9 00                sbc     #<combuf        ;start
+    97 00:0843: 29 80                and     #128            ;make mod 128
+    98 00:0845: 85 3D                sta     commax          ;and save
+    99 00:0847: 98                   tya                     ;get high
+   100 00:0848: E9 0C                sbc     #>combuf        ;subtract again
+   101 00:084A: 85 3E                sta     commax+1        ;and save it
+   102                        ;commax is maximum length - now drop by a page
+   103 00:084C: C6 3E                dec     commax+1
+   104                        ;now calculate end of buffer + 1 byte
+   105 00:084E: 18                   clc                     ;then
+   106 00:084F: A5 3D                lda     commax          ;add
+   107 00:0851: 69 00                adc     #<combuf        ;start
+   108 00:0853: 85 3D                sta     commax          ;back
+   109 00:0855: A5 3E                lda     commax+1        ;in to
+   110 00:0857: 69 0C                adc     #>combuf        ;get buffer
+   111 00:0859: 85 3E                sta     commax+1        ;limit
+   112                        ;initialize pointers
+  Tue Sep 27 2022  2:10                                                                                                    Page 3
+
+
+   113 00:085B: 20 A6 0A             jsr     clrcom          ;clear com pointer
+   114 00:085E: A9 80                lda     #128            ;set pointers
+   115 00:0860: 85 30                sta     kimpnt          ;to invalid
+   116                        ;check to make sure file name is ufn
+   117 00:0862: A2 0B                ldx     #11             ;check all char
+   118 00:0864: A9 3F                lda     #'?'            ;for ambiguous
+   119 00:0866: DD 07 01     tstamb  cmp     dflfcb,x        ;if not try
+   120 00:0869: D0 03                bne     tstnxt          ;for next
+   121 00:086B: 4C 49 0A             jmp     inperr          ;else an error
+   122 00:086E: CA           tstnxt  dex                     ;count down
+   123 00:086F: D0 F5                bne     tstamb          ;and loop
+   124                        ;now see if type either KIM or blank
+   125 00:0871: A2 02                ldx     #2              ;if type
+   126 00:0873: BD 04 0B     chkmkm  lda     kimtyp,x        ;is not
+   127 00:0876: DD 10 01             cmp     dflfcb+9,x      ;kim then
+   128 00:0879: D0 05                bne     chkspc          ;try for spaces
+   129 00:087B: CA                   dex                     ;else count down
+   130 00:087C: 10 F5                bpl     chkmkm          ;and loop
+   131 00:087E: 30 0F                bmi     typeok          ;ok if kim
+   132 00:0880: A2 02        chkspc  ldx     #2              ;check for
+   133 00:0882: A9 20                lda     #' '            ;spaces
+   134 00:0884: DD 10 01     chkmsp  cmp     dflfcb+9,x      ;if so
+   135 00:0887: F0 03                beq     tnxspc          ;test next
+   136 00:0889: 4C 49 0A             jmp     inperr          ;else error
+   137 00:088C: CA           tnxspc  dex                     ;count down
+   138 00:088D: 10 F5                bpl     chkmsp          ;and loop
+   139                        ;input file name is OK so build .COM fcb from input
+   140 00:088F: A2 08        typeok  ldx     #8              ;set up
+   141 00:0891: BD 07 01     movfcb  lda     dflfcb,x        ;and move
+   142 00:0894: 95 5F                sta     comfcb,x        ;name to
+   143 00:0896: CA                   dex                     ;com
+   144 00:0897: 10 F8                bpl     movfcb          ;fcb
+   145                        ;set input extension to KIM and output to COM
+   146 00:0899: A2 02                ldx     #2              ;then make
+   147 00:089B: BD 04 0B     settyp  lda     kimtyp,x        ;sure kim
+   148 00:089E: 9D 10 01             sta     dflfcb+9,x      ;type is
+   149 00:08A1: BD 07 0B             lda     comtyp,x        ;set and com
+   150 00:08A4: 95 68                sta     comfcb+9,x      ;type is set
+   151 00:08A6: CA                   dex                     ;in
+   152 00:08A7: 10 F2                bpl     settyp          ;fcbs
+   153                        ;file name are OK so see if .KIM exists
+   154 00:08A9: 20 07 0A             jsr     srhkim          ;search for kim
+   155 00:08AC: D0 03                bne     kimok           ;if there ok
+   156 00:08AE: 4C 49 0A             jmp     inperr          ;else error
+   157                        ;input exists so delete and then create .COM file
+   158 00:08B1: 20 20 0A     kimok   jsr     dltcom          ;delete com file
+   159 00:08B4: 20 24 0A             jsr     crtcom          ;create new com
+   160 00:08B7: D0 03                bne     comok           ;if ok continue
+   161 00:08B9: 4C 57 0A             jmp     outerr          ;else error
+   162                        ;finally we open the .KIM and .COM files
+   163 00:08BC: 20 0B 0A     comok   jsr     opnkim          ;open source
+   164 00:08BF: D0 03                bne     kimopn          ;continue if ok
+   165 00:08C1: 4C 49 0A             jmp     inperr          ;else error
+   166 00:08C4: 20 30 0A     kimopn  jsr     opncom          ;open com file
+   167 00:08C7: D0 03                bne     main            ;continue if ok
+   168 00:08C9: 4C 57 0A             jmp     outerr          ;else error
+   169                        ;read loop - get characters from .KIM file and process them
+   170 00:08CC: 20 95 09     main    jsr     getchr          ;get char
+   171 00:08CF: C9 24                cmp     #'$'            ;if $
+   172 00:08D1: F0 65                beq     endit           ;then done
+   173 00:08D3: C9 1A                cmp     #eof            ;if eof
+   174 00:08D5: F0 61                beq     endit           ;then done
+   175 00:08D7: C9 3B                cmp     #semico         ;if not file
+  Tue Sep 27 2022  2:10                                                                                                    Page 4
+
+
+   176 00:08D9: D0 F1                bne     main            ;mark try again
+   177                        ;first two characters after ; are number of bytes of data in record (count)
+   178 00:08DB: 20 BA 09             jsr     gettwo          ;get length
+   179 00:08DE: F0 58                beq     endit           ;if zero done
+   180 00:08E0: 85 37                sta     count           ;else set count
+   181                        ;update cumulative count
+   182 00:08E2: 18                   clc                     ;add to
+   183 00:08E3: 65 38                adc     bytes           ;cumulative count
+   184 00:08E5: 85 38                sta     bytes           ;and
+   185 00:08E7: 90 02                bcc     nohiby          ;save
+   186 00:08E9: E6 39                inc     bytes+1         ;low and high
+   187                        ;next four characters are start address of record in HL order
+   188 00:08EB: 20 BA 09     nohiby  jsr     gettwo          ;get high
+   189 00:08EE: 85 36                sta     start+1         ;address
+   190 00:08F0: 20 BA 09             jsr     gettwo          ;and get
+   191 00:08F3: 85 35                sta     start           ;low
+   192                        ;make sure start >= curent
+   193 00:08F5: C5 33                cmp     curent          ;compare to
+   194 00:08F7: A5 36                lda     start+1         ;start
+   195 00:08F9: E5 34                sbc     curent+1        ;address saved
+   196 00:08FB: B0 03                bcs     tsteql          ;if >= then ok
+   197 00:08FD: 4C 5E 0A             jmp     seqerr          ;else error
+   198                        ;see if start > current and fill buffer with 0 until curent = start
+   199 00:0900: A5 35        tsteql  lda     start           ;see if
+   200 00:0902: C5 33                cmp     curent          ;same as currrent
+   201 00:0904: D0 06                bne     fillmr          ;if not fill more
+   202 00:0906: A5 36                lda     start+1         ;try high
+   203 00:0908: C5 34                cmp     curent+1        ;comparison
+   204 00:090A: F0 0E                beq     fillok          ;if same begin read
+   205 00:090C: A9 00        fillmr  lda     #null           ;else
+   206 00:090E: 20 AF 0A             jsr     insert          ;fill com
+   207 00:0911: E6 33                inc     curent          ;then
+   208 00:0913: D0 EB                bne     tsteql          ;bump
+   209 00:0915: E6 34                inc     curent+1        ;current and
+   210 00:0917: 4C 00 09             jmp     tsteql          ;loop
+   211                        ;update curent <-- curent + count
+   212 00:091A: A5 37        fillok  lda     count           ;first
+   213 00:091C: 18                   clc                     ;update
+   214 00:091D: 65 33                adc     curent          ;current
+   215 00:091F: 85 33                sta     curent          ;pointer
+   216 00:0921: 90 02                bcc     dofill          ;with
+   217 00:0923: E6 34                inc     curent+1        ;carry
+   218                        ;get count bytes from .KIM and convert to binary and put in .COM buffer
+   219 00:0925: 20 BA 09     dofill  jsr     gettwo          ;get byte
+   220 00:0928: 20 AF 0A             jsr     insert          ;put in com
+   221 00:092B: C6 37                dec     count           ;count down
+   222 00:092D: D0 F6                bne     dofill          ;and loop
+   223                        ;ignore two checksum bytes
+   224 00:092F: 20 BA 09             jsr     gettwo          ;ignore
+   225 00:0932: 20 BA 09             jsr     gettwo          ;checksum
+   226 00:0935: 4C CC 08             jmp     main            ;and get next
+   227                        ;exit sequence
+   228 00:0938: 38           endit   sec                     ;set carry
+   229 00:0939: A5 31                lda     compnt          ;if pointer
+   230 00:093B: E9 00                sbc     #<combuf        ;at even
+   231 00:093D: 29 7F                and     #127            ;record
+   232 00:093F: F0 08                beq     noexcy          ;then ok
+   233 00:0941: A9 1A                lda     #eof            ;else add
+   234 00:0943: 20 AF 0A             jsr     insert          ;eof and
+   235 00:0946: 4C 38 09             jmp     endit           ;loop
+   236 00:0949: A5 31        noexcy  lda     compnt          ;get
+   237 00:094B: A4 32                ldy     compnt+1        ;pointer
+   238 00:094D: 85 3D                sta     commax          ;and set
+  Tue Sep 27 2022  2:10                                                                                                    Page 5
+
+
+   239 00:094F: 84 3E                sty     commax+1        ;limit
+   240 00:0951: 20 CB 0A             jsr     wrtbuf          ;do one more
+   241 00:0954: 20 18 0A             jsr     bufcom          ;go back to front of buffer
+   242 00:0957: 20 2C 0A     wrtdne  jsr     clscom          ;close com file
+   243 00:095A: D0 03                bne     wrtcls          ;if ok continue
+   244 00:095C: 4C 57 0A             jmp     outerr          ;else error
+   245 00:095F: A9 0A        wrtcls  lda     #<nxtadr        ;point to
+   246 00:0961: A0 0B                ldy     #>nxtadr        ;next message
+   247 00:0963: 20 41 0A             jsr     outbuf          ;and send
+   248 00:0966: A5 34                lda     curent+1        ;send high
+   249 00:0968: 20 F3 09             jsr     outbyt          ;byte
+   250 00:096B: A5 33                lda     curent          ;and low
+   251 00:096D: 20 F3 09             jsr     outbyt          ;byte
+   252 00:0970: A9 1A                lda     #<bytrde        ;point to
+   253 00:0972: A0 0B                ldy     #>bytrde        ;number read message
+   254 00:0974: 20 41 0A             jsr     outbuf          ;and send
+   255 00:0977: A5 39                lda     bytes+1         ;send high
+   256 00:0979: 20 F3 09             jsr     outbyt          ;byte
+   257 00:097C: A5 38                lda     bytes           ;and low
+   258 00:097E: 20 F3 09             jsr     outbyt          ;byte
+   259 00:0981: A9 28                lda     #<recwrt        ;point to
+   260 00:0983: A0 0B                ldy     #>recwrt        ;number written message
+   261 00:0985: 20 41 0A             jsr     outbuf          ;send
+   262 00:0988: A5 3B                lda     record+1        ;get high
+   263 00:098A: 20 F3 09             jsr     outbyt          ;count
+   264 00:098D: A5 3A                lda     record          ;and low
+   265 00:098F: 20 F3 09             jsr     outbyt          ;then return
+   266 00:0992: 4C 00 01             jmp     boot            ;with warm boot
+   267                        ;subroutines
+   268                        ;get character from kim file
+   269 00:0995: A6 30        getchr  ldx     kimpnt          ;get pointer
+   270 00:0997: 10 19                bpl     noread          ;if ok use
+   271 00:0999: 20 FF 09             jsr     bufkim          ;point to kim
+   272 00:099C: 20 0F 0A             jsr     rdekim          ;read record
+   273 00:099F: D0 03                bne     *+5             ;if no error check for eof
+   274 00:09A1: 4C 49 0A             jmp     inperr          ;else input error
+   275 00:09A4: C9 00                cmp     #0              ;if not eof
+   276 00:09A6: F0 07                beq     readok          ;continue
+   277 00:09A8: A9 1A                lda     #eof            ;else an eof
+   278 00:09AA: 8D 28 01             sta     dflbuf          ;insert in buffer
+   279 00:09AD: A9 00                lda     #0              ;clear for ok
+   280 00:09AF: AA           readok  tax                     ;set pointer
+   281 00:09B0: 86 30                stx     kimpnt          ;and save
+   282 00:09B2: E6 30        noread  inc     kimpnt          ;bump pointer
+   283 00:09B4: BD 28 01             lda     dflbuf,x        ;get char
+   284 00:09B7: 29 7F                and     #%01111111      ;mask out msb
+   285 00:09B9: 60                   rts                     ;return
+   286                        ;get byte
+   287 00:09BA: 20 BD 09     gettwo  jsr     getone          ;get first and continue
+   288                        ;get nibble
+   289 00:09BD: 20 95 09     getone  jsr     getchr          ;get char
+   290 00:09C0: C9 30                cmp     #'0'            ;if less than "0"
+   291 00:09C2: 30 1E                bmi     packer          ;is an error
+   292 00:09C4: C9 3A                cmp     #'9'+1          ;if 0 to 9 is
+   293 00:09C6: 30 0B                bmi     decnum          ;decimal
+   294 00:09C8: C9 41                cmp     #'A'            ;if less than a
+   295 00:09CA: 30 16                bmi     packer          ;is error
+   296 00:09CC: C9 47                cmp     #'F'+1          ;if more than f
+   297 00:09CE: 10 12                bpl     packer          ;is error
+   298 00:09D0: 18                   clc                     ;add 9
+   299 00:09D1: 69 09                adc     #9              ;for a to f
+   300 00:09D3: 2A           decnum  rol     a               ;shift
+   301 00:09D4: 2A                   rol     a               ;to
+  Tue Sep 27 2022  2:10                                                                                                    Page 6
+
+
+   302 00:09D5: 2A                   rol     a               ;high
+   303 00:09D6: 2A                   rol     a               ;nibble
+   304 00:09D7: A2 04                ldx     #4              ;then
+   305 00:09D9: 2A           packlp  rol     a               ;shift a
+   306 00:09DA: 26 3C                rol     number          ;to number
+   307 00:09DC: CA                   dex                     ;four
+   308 00:09DD: D0 FA                bne     packlp          ;times
+   309 00:09DF: A5 3C                lda     number          ;return
+   310 00:09E1: 60                   rts                     ;with number
+   311 00:09E2: 4C 50 0A     packer  jmp     nthxer          ;error handler
+   312                        ;nibble to ascii
+   313 00:09E5: 29 0F        hex     and     #$f             ;look at low
+   314 00:09E7: 09 30                ora     #'0'            ;add "0"
+   315 00:09E9: C9 3A                cmp     #'9'+1          ;if 0 to 9
+   316 00:09EB: 30 03                bmi     notalp          ;ok
+   317 00:09ED: 18                   clc                     ;else add
+   318 00:09EE: 69 07                adc     #7              ;7 for a to f
+   319 00:09F0: 4C 3D 0A     notalp  jmp     chrout          ;send
+   320                        ;byte to ascii
+   321 00:09F3: 48           outbyt  pha                     ;save byte
+   322 00:09F4: 4A                   lsr     a               ;move
+   323 00:09F5: 4A                   lsr     a               ;high
+   324 00:09F6: 4A                   lsr     a               ;to
+   325 00:09F7: 4A                   lsr     a               ;low
+   326 00:09F8: 20 E5 09             jsr     hex             ;convert and print
+   327 00:09FB: 68                   pla                     ;same
+   328 00:09FC: 4C E5 09             jmp     hex             ;for low
+   329                        ;kim file references
+   330 00:09FF: A9 28        bufkim  lda     #<dflbuf        ;point to
+   331 00:0A01: A0 01                ldy     #>dflbuf        ;buffer
+   332 00:0A03: A2 1A                ldx     #26             ;set buffer
+   333 00:0A05: D0 3C                bne     pemgo
+   334 00:0A07: A2 11        srhkim  ldx     #17             ;search for first
+   335 00:0A09: D0 06                bne     setkim
+   336 00:0A0B: A2 0F        opnkim  ldx     #15             ;open
+   337 00:0A0D: D0 02                bne     setkim
+   338 00:0A0F: A2 14        rdekim  ldx     #20             ;read record
+   339 00:0A11: A9 07        setkim  lda     #<dflfcb        ;set fcb
+   340 00:0A13: A0 01                ldy     #>dflfcb        ;to default
+   341 00:0A15: 4C 43 0A             jmp     pemgo
+   342                        ;com file references
+   343 00:0A18: A9 00        bufcom  lda     #<combuf        ;set buffer
+   344 00:0A1A: A0 0C                ldy     #>combuf        ;to com
+   345 00:0A1C: A2 1A                ldx     #26             ;set buffer
+   346 00:0A1E: D0 23                bne     pemgo
+   347 00:0A20: A2 13        dltcom  ldx     #19             ;delete file
+   348 00:0A22: D0 0E                bne     setcom
+   349 00:0A24: A2 16        crtcom  ldx     #22             ;create file
+   350 00:0A26: D0 0A                bne     setcom
+   351 00:0A28: A2 15        wrtcom  ldx     #21             ;write record
+   352 00:0A2A: D0 06                bne     setcom
+   353 00:0A2C: A2 10        clscom  ldx     #16             ;close file
+   354 00:0A2E: D0 02                bne     setcom
+   355 00:0A30: A2 0F        opncom  ldx     #15             ;open file
+   356 00:0A32: A9 5F        setcom  lda     #<comfcb        ;point to
+   357 00:0A34: A0 00                ldy     #>comfcb        ;com fcb
+   358 00:0A36: 4C 43 0A             jmp     pemgo
+   359                        ;general pem references
+   360 00:0A39: A2 00        wrmbte  ldx     #0              ;warm boot
+   361 00:0A3B: F0 06                beq     pemgo
+   362 00:0A3D: A2 02        chrout  ldx     #2              ;character output
+   363 00:0A3F: D0 02                bne     pemgo
+   364 00:0A41: A2 09        outbuf  ldx     #9              ;string output
+  Tue Sep 27 2022  2:10                                                                                                    Page 7
+
+
+   365 00:0A43: 20 03 01     pemgo   jsr     pem             ;execute
+   366 00:0A46: C9 FF                cmp     #255            ;test for invalid
+   367 00:0A48: 60                   rts
+   368                        ;error routines
+   369 00:0A49: A9 68        inperr  lda     #<inerms        ;input file error
+   370 00:0A4B: A0 0A                ldy     #>inerms
+   371 00:0A4D: 4C 62 0A             jmp     errsnd
+   372 00:0A50: A9 94        nthxer  lda     #<icerms        ;invalid character
+   373 00:0A52: A0 0A                ldy     #>icerms
+   374 00:0A54: 4C 62 0A             jmp     errsnd
+   375 00:0A57: A9 74        outerr  lda     #<oterms        ;output file error
+   376 00:0A59: A0 0A                ldy     #>oterms
+   377 00:0A5B: 4C 62 0A             jmp     errsnd
+   378 00:0A5E: A9 81        seqerr  lda     #<sqerms        ;sequence error
+   379 00:0A60: A0 0A                ldy     #>sqerms
+   380 00:0A62: 20 41 0A     errsnd  jsr     outbuf          ;send
+   381 00:0A65: 4C 39 0A             jmp     wrmbte          ;do warm boot
+   382                        ;error messages
+   383 00:0A68: 49 4E 50 55  inerms  .DB     "INPUT ERROR$"
+       00:0A6C: 54 20 45 52 
+       00:0A70: 52 4F 52 24 
+   384 00:0A74: 4F 55 54 50  oterms  .DB     "OUTPUT ERROR$"
+       00:0A78: 55 54 20 45 
+       00:0A7C: 52 52 4F 52 
+       00:0A80: 24 
+   385 00:0A81: 42 41 44 20  sqerms  .DB     "BAD SEQUENCE ERROR$"
+       00:0A85: 53 45 51 55 
+       00:0A89: 45 4E 43 45 
+       00:0A8D: 20 45 52 52 
+       00:0A91: 4F 52 24 
+   386 00:0A94: 49 4E 56 41  icerms  .DB     "INVALID CHARACTER$"
+       00:0A98: 4C 49 44 20 
+       00:0A9C: 43 48 41 52 
+       00:0AA0: 41 43 54 45 
+       00:0AA4: 52 24 
+   387                        ;clear com pointer
+   388 00:0AA6: A9 00        clrcom  lda     #<combuf        ;get low
+   389 00:0AA8: A0 0C                ldy     #>combuf        ;and high
+   390 00:0AAA: 85 31                sta     compnt          ;pointer
+   391 00:0AAC: 84 32                sty     compnt+1        ;and set
+   392 00:0AAE: 60                   rts
+   393                        ;insert byte into com file
+   394 00:0AAF: A6 31        insert  ldx     compnt          ;compare low pointer
+   395 00:0AB1: E4 3D                cpx     commax          ;to max
+   396 00:0AB3: D0 0B                bne     nocmwr          ;branch if not there
+   397 00:0AB5: A6 32                ldx     compnt+1        ;do same
+   398 00:0AB7: E4 3E                cpx     commax+1        ;for high
+   399 00:0AB9: D0 05                bne     nocmwr          ;bytes
+   400 00:0ABB: 48                   pha                     ;save byte
+   401 00:0ABC: 20 CB 0A             jsr     wrtbuf          ;write file
+   402 00:0ABF: 68                   pla                     ;get byte
+   403 00:0AC0: A0 00        nocmwr  ldy     #0              ;clear index
+   404 00:0AC2: 91 31                sta     (compnt),y      ;save byte
+   405 00:0AC4: E6 31                inc     compnt          ;bump
+   406 00:0AC6: D0 02                bne     *+4             ;pointer
+   407 00:0AC8: E6 32                inc     compnt+1        ;for next
+   408 00:0ACA: 60                   rts
+   409                        ;write com buffer
+   410 00:0ACB: 20 A6 0A     wrtbuf  jsr     clrcom          ;clear pointer
+   411 00:0ACE: A5 31        wrtclp  lda     compnt          ;set
+   412 00:0AD0: A4 32                ldy     compnt+1        ;pointer
+   413 00:0AD2: A2 1A                ldx     #26             ;and set
+   414 00:0AD4: 20 03 01             jsr     pem             ;buffer address
+  Tue Sep 27 2022  2:10                                                                                                    Page 8
+
+
+   415 00:0AD7: A5 31                lda     compnt          ;get low pointer
+   416 00:0AD9: C5 3D                cmp     commax          ;compare to max
+   417 00:0ADB: D0 09                bne     docwrt          ;write if not there
+   418 00:0ADD: A5 32                lda     compnt+1        ;also check
+   419 00:0ADF: C5 3E                cmp     commax+1        ;high pointer
+   420 00:0AE1: D0 03                bne     docwrt          ;write if different
+   421 00:0AE3: 4C A6 0A             jmp     clrcom          ;else clear pointer and exit
+   422 00:0AE6: 20 28 0A     docwrt  jsr     wrtcom          ;write record
+   423 00:0AE9: C9 00                cmp     #0              ;test for ok
+   424 00:0AEB: F0 03                beq     *+5             ;continue if ok
+   425 00:0AED: 4C 57 0A             jmp     outerr          ;else error
+   426 00:0AF0: 18                   clc                     ;bump
+   427 00:0AF1: A5 31                lda     compnt          ;pointer
+   428 00:0AF3: 69 80                adc     #128            ;by 128
+   429 00:0AF5: 85 31                sta     compnt          ;and
+   430 00:0AF7: 90 02                bcc     *+4             ;save for
+   431 00:0AF9: E6 32                inc     compnt+1        ;next
+   432 00:0AFB: E6 3A                inc     record          ;also
+   433 00:0AFD: D0 02                bne     *+4             ;bump
+   434 00:0AFF: E6 3B                inc     record+1        ;record count
+   435 00:0B01: 4C CE 0A             jmp     wrtclp          ;and loop
+   436                        ;tables
+   437 00:0B04: 4B 49 4D     kimtyp  .DB     "KIM"
+   438 00:0B07: 43 4F 4D     comtyp  .DB     "COM"
+   439                        ;messages
+   440 00:0B0A: 0D 0A 4E 45  nxtadr  .DB     cr,lf,"NEXT ADDRESS=$"
+       00:0B0E: 58 54 20 41 
+       00:0B12: 44 44 52 45 
+       00:0B16: 53 53 3D 24 
+   441 00:0B1A: 0D 0A 42 59  bytrde  .DB     cr,lf,"BYTES READ=$"
+       00:0B1E: 54 45 53 20 
+       00:0B22: 52 45 41 44 
+       00:0B26: 3D 24 
+   442 00:0B28: 0D 0A 52 45  recwrt  .DB     cr,lf,"RECORDS WRITTEN=$"
+       00:0B2C: 43 4F 52 44 
+       00:0B30: 53 20 57 52 
+       00:0B34: 49 54 54 45 
+       00:0B38: 4E 3D 24 
+   443                        ;com file buffer
+   444                                .ORG    */256*256+256   ;align to page boundary
+   445                        combuf
+   446                                .end
+
+
+      Lines assembled: 446
+      Errors: 0

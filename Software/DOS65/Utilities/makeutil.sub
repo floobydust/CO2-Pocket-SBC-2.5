@@ -1,0 +1,52 @@
+sd b:
+era b:*.kim
+era b:*.prn
+era b:*.com
+go 65325
+asm b:alloc208
+asm b:asm212
+asm b:compl205
+asm b:compr204
+asm b:copy203
+asm b:cputype
+asm b:debug204
+asm b:dump100
+asm b:edit205
+asm b:mkcom204
+asm b:more202
+asm b:page100
+asm b:run207
+asm b:ucopy302
+asm b:sub300
+makecom b:alloc208
+makecom b:asm212
+makecom b:compl205
+makecom b:compr204
+makecom b:copy203
+makecom b:cputype
+makecom b:debug204
+makecom b:dump100
+makecom b:edit205
+makecom b:mkcom204
+makecom b:more202
+makecom b:page100
+makecom b:run207
+makecom b:ucopy302
+makecom b:sub300
+ren b:alloc208.com b:alloc.com
+ren b:asm212.com b:asm.com
+ren b:compl205.com b:compile.com
+ren b:compr204.com b:comp.com
+ren b:copy203.com b:copy.com
+ren b:debug204.com b:debug.com
+ren b:dump100.com b:dump.com
+ren b:edit205.com b:edit.com
+ren b:mkcom204.com b:mkcom.com
+ren b:more202.com b:more.com
+ren b:page100.com b:page.com
+ren b:run207.com b:run.com
+ren b:ucopy302.com b:ucopy.com
+ren b:sub300.com b:submit.com
+go 65331
+sd b:
+go 57371

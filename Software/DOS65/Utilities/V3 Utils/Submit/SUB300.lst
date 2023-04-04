@@ -1,0 +1,568 @@
+  Sun Mar  6 2022  5:38                                                                                                    Page 1
+
+
+                                               ***************************************
+                                               **      WDC 65C02 Macro Assembler    **
+                                               **                                   **
+                                               **     Version 3.49.1- Feb  6 2006    **
+                                               ***************************************
+
+     1                        ;*************************************************************************************************
+     2                                GLOBALS ON
+     3                                CASE    OFF
+     4                                CHIP    W65C02S
+     5                                PW      132
+     6                                PL      66
+     7                        ;*************************************************************************************************
+     8                        ;SUBMIT V3.03
+     9                        ;DOS/65 program to create $$$.SUB file from source file of type SUB and with
+    10                        ;parameter substitution. This program is based on the CP/M program of the same
+    11                        ;name.
+    12                        ;SUBMIT will only work with the CCM of DOS/65 V3 or later.
+    13                        ;released:              23 February 2015 (V3.00)
+    14                        ;
+    15                        ;Updated 24th May 2021 - KM
+    16                        ; - 3.03 Version. Changes for:
+    17                        ; - WDC Assembler/Linker, DOS/65 Version 3.03
+    18                        ; - CMOS opcodes and addressing modes (requires 65C02 CPU)
+    19                        ; - Code size reduction
+    20                        ; - Some source cleanup, commenting
+    21                        ;*************************************************************************************************
+    22                        ;DOS/65 constants
+    23             00000030   PZSTRT  .EQU    $30                     ;page zero start
+    24             00000103   PEM     .EQU    $103
+    25             00000107   DFLFCB  .EQU    $107
+    26             00000128   DFLBUF  .EQU    $128
+    27             00000800   TEA     .EQU    $800
+    28             00002004   BUFLNG  .EQU    8196                    ;output buffer (rbuff) length
+    29                        ;ASCII definitions
+    30             0000000A   LF      .EQU    $0A                     ;linefeed
+    31             0000000D   CR      .EQU    $0D                     ;carriage return
+    32             0000001A   EOF     .EQU    $1A                     ;end of file
+    33                        ;*************************************************************************************************
+    34                        ;
+    35                                PAGE0
+    36                        ;Page Zero variables
+    37                                .ORG    PZSTRT                  ;start after HW registers
+    38                        ErrMs                                   ;address of error message
+    39 00:0030:                      DEFS    2
+    40                        ;variables for MOVE
+    41                        from                                    ;from pointer in MOVE
+    42 00:0032:                      DEFS    2
+    43                        to                                      ;to pointer in MOVE
+    44 00:0034:                      DEFS    2
+    45                        bbyte                                   ;b byte value in GetSrc
+    46 00:0036:                      DEFS    1
+    47                        sbp                                     ;SUB buffer pointer
+    48 00:0037:                      DEFS    1
+    49                        rbp                                     ;pointer into rbuff
+    50 00:0038:                      DEFS    2
+    51                        rlen                                    ;record length
+    52 00:003A:                      DEFS    1
+    53                        ss                                      ;substitue string
+    54 00:003B:                      DEFS    1
+    55                        ssbp                                    ;substitute string pointer
+    56 00:003C:                      DEFS    1
+    57                        PutRIn                                  ;In/Out character
+  Sun Mar  6 2022  5:38                                                                                                    Page 2
+
+
+    58 00:003D:                      DEFS    1
+    59                        readng                                  ;flag = bit 7 set or cleared
+    60 00:003E:                      DEFS    1
+    61                        b                                       ;character active in fillrbuff
+    62 00:003F:                      DEFS    1
+    63                        ichar                                   ;single char and index in makefile
+    64 00:0040:                      DEFS    1
+    65                        ;
+    66 00:0041:                      ENDS
+    67                        ;
+    68                                CODE
+    69                        ;
+    70                        ;code section
+    71                                .ORG    TEA                     ;Start at TEA
+    72                        ;
+    73                        ;main code - simple and straightforward
+    74 00:0800: A9 15                lda     #<openms                ;send opening message
+    75 00:0802: A0 08                ldy     #>openms
+    76 00:0804: 20 DE 08             jsr     MsgOut
+    77 00:0807: 20 0E 09             jsr     SETUP                   ;get everything ready
+    78 00:080A: 20 C1 09             jsr     FillRB                  ;get and process source
+    79 00:080D: 20 B9 0A             jsr     MkFile                  ;prepare and save $$$.sub
+    80 00:0810: A2 00        boot    ldx     #0                      ;must end with warm boot
+    81 00:0812: 4C 03 01             jmp     pem                     ;using PEM
+    82                        ;
+    83                        ;messages and strings
+    84 00:0815: 44 4F 53 2F  OpenMs  .DB     'DOS/65 SUBMIT V3.03$'
+       00:0819: 36 35 20 53 
+       00:081D: 55 42 4D 49 
+       00:0821: 54 20 56 33 
+       00:0825: 2E 30 33 24 
+    85 00:0829: 0D 0A 45 72  ERRLMs  .DB     cr,lf,'Error on Line $'
+       00:082D: 72 6F 72 20 
+       00:0831: 6F 6E 20 4C 
+       00:0835: 69 6E 65 20 
+       00:0839: 24 
+    86 00:083A: 53 55 42     SUBStr  .DB     'SUB'
+    87 00:083D: 4E 6F 20 2E  NSUBMs  .DB     'No .SUB File Present$'
+       00:0841: 53 55 42 20 
+       00:0845: 46 69 6C 65 
+       00:0849: 20 50 72 65 
+       00:084D: 73 65 6E 74 
+       00:0851: 24 
+    88 00:0852: 44 69 73 6B  WrErMs  .DB     'Disk Write Error$'
+       00:0856: 20 57 72 69 
+       00:085A: 74 65 20 45 
+       00:085E: 72 72 6F 72 
+       00:0862: 24 
+    89 00:0863: 43 6F 6D 6D  BfOvMs  .DB     'Command Buffer Overflow$'
+       00:0867: 61 6E 64 20 
+       00:086B: 42 75 66 66 
+       00:086F: 65 72 20 4F 
+       00:0873: 76 65 72 66 
+       00:0877: 6C 6F 77 24 
+    90 00:087B: 43 6F 6D 6D  ToLnMs  .DB     'Command Too Long$'
+       00:087F: 61 6E 64 20 
+       00:0883: 54 6F 6F 20 
+       00:0887: 4C 6F 6E 67 
+       00:088B: 24 
+    91 00:088C: 50 61 72 61  PrmEMs  .DB     'Parameter Error$'
+       00:0890: 6D 65 74 65 
+       00:0894: 72 20 45 72 
+       00:0898: 72 6F 72 24 
+  Sun Mar  6 2022  5:38                                                                                                    Page 3
+
+
+    92 00:089C: 49 6E 76 61  IvClMs  .DB     'Invalid Control Character$'
+       00:08A0: 6C 69 64 20 
+       00:08A4: 43 6F 6E 74 
+       00:08A8: 72 6F 6C 20 
+       00:08AC: 43 68 61 72 
+       00:08B0: 61 63 74 65 
+       00:08B4: 72 24 
+    93 00:08B6: 44 69 72 65  DrFlMs  .DB     'Directory Full$'
+       00:08BA: 63 74 6F 72 
+       00:08BE: 79 20 46 75 
+       00:08C2: 6C 6C 24 
+    94 00:08C5: 43 61 6E 6E  NoClMs  .DB     'Cannot Close, Read-only?$'
+       00:08C9: 6F 74 20 43 
+       00:08CD: 6C 6F 73 65 
+       00:08D1: 2C 20 52 65 
+       00:08D5: 61 64 2D 6F 
+       00:08D9: 6E 6C 79 3F 
+       00:08DD: 24 
+    95                        ;
+    96                        ;send message pointed to by AY to console
+    97 00:08DE: A2 09        MsgOut  ldx     #9                      ;send message out command
+    98 00:08E0: 4C 03 01             jmp     PEM
+    99                        ;
+   100                        ;the following PEM commands are only used once, so the usage in code
+   101                        ; below just does a LDX #cmd, then JSR PEM. Saves some space.
+   102                        ;
+   103                        ;open file with FCB at AY
+   104                        ;OPEN    ldx     #15
+   105                        ;        jmp     PEM
+   106                        ;
+   107                        ;close file with FCB at AY
+   108                        ;CLOSE   ldx     #16
+   109                        ;        jmp     PEM
+   110                        ;
+   111                        ;delete file with FCB at AY
+   112                        ;DELETE  ldx     #19
+   113                        ;        jmp     PEM
+   114                        ;
+   115                        ;read from file
+   116                        ;READ    ldx     #20
+   117                        ;        jmp     PEM
+   118                        ;
+   119                        ;write to file
+   120                        ;WRITE   ldx     #21
+   121                        ;        jmp     PEM
+   122                        ;
+   123                        ;create file
+   124                        ;MAKE    ldx     #22
+   125                        ;        jmp     PEM
+   126                        ;
+   127                        ;move(from,to,n)
+   128                        ;source address (from)
+   129                        ;destination address (to)
+   130                        ;count (n)
+   131                        ;Parameters are passed as follows:
+   132                        ;x=n
+   133                        ;a=low of to
+   134                        ;y=high of to
+   135                        ;from must be set by calling routine
+   136 00:08E3: 85 34        move    sta     to                      ;save to
+   137 00:08E5: 84 35                sty     to+1
+   138 00:08E7: A0 00                ldy     #0                      ;clear index
+   139 00:08E9: B1 32        movelp  lda     (from),y                ;get byte
+  Sun Mar  6 2022  5:38                                                                                                    Page 4
+
+
+   140 00:08EB: 91 34                sta     (to),y                  ;put byte
+   141 00:08ED: C8                   iny                             ;increment index
+   142 00:08EE: CA                   dex                             ;drop count
+   143 00:08EF: D0 F8                bne     movelp                  ;loop if more
+   144 00:08F1: 60                   rts
+   145                        ;
+   146                        ;general error handling routine
+   147                        ;INPUT: Specific message address = AY
+   148                        ;OUTPUT: none
+   149 00:08F2: 85 30        ERROR   sta     ErrMs                   ;save error line
+   150 00:08F4: 84 31                sty     ErrMs+1
+   151 00:08F6: A9 29                lda     #<ERRLMs                ;send main error message
+   152 00:08F8: A0 08                ldy     #>ERRLMs
+   153 00:08FA: 20 DE 08             jsr     MsgOut                  ;send to console
+   154 00:08FD: A9 21                lda     #<LneNum                ;point to line # structure
+   155 00:08FF: A0 0B                ldy     #>LneNum
+   156 00:0901: 20 DE 08             jsr     MsgOut                  ;send to console
+   157 00:0904: A5 30                lda     ErrMs                   ;point to specific message
+   158 00:0906: A4 31                ldy     ErrMs+1
+   159 00:0908: 20 DE 08             jsr     MsgOut                  ;send to console
+   160 00:090B: 4C 10 08             jmp     boot                    ;back to CCM
+   161                        ;
+   162                        ;set up the various pointers, counters, buffers, etc.
+   163 00:090E: A9 29        SETUP   lda     #<dflbuf+1              ;point to default buffer + 1
+   164 00:0910: A0 01                ldy     #>dflbuf                ;second position
+   165 00:0912: 85 32                sta     from                    ;store to from location
+   166 00:0914: 84 33                sty     from+1                  ;store high byte
+   167 00:0916: A2 7F                ldx     #127                    ;load 127 as count to move
+   168 00:0918: A9 47                lda     #<sstrng                ;get address for destination
+   169 00:091A: A0 0B                ldy     #>sstrng                ;get address high byte
+   170 00:091C: 20 E3 08             jsr     move                    ;call move routine
+   171 00:091F: AE 28 01             ldx     DflBuf                  ;get first byte = length
+   172 00:0922: 9E 47 0B             stz     sstrng,x                ;insert 0 to mark end
+   173 00:0925: A9 3A                lda     #<SUBStr                ;get address for SUB string
+   174 00:0927: A0 08                ldy     #>SUBStr                ;get high byte address
+   175 00:0929: 85 32                sta     from                    ;store to from location
+   176 00:092B: 84 33                sty     from+1                  ;store high byte
+   177 00:092D: A2 03                ldx     #3                      ;load 3 as count to move
+   178 00:092F: A9 10                lda     #<dflfcb+9              ;get address for destination
+   179 00:0931: A0 01                ldy     #>dflfcb                ;get address high byte
+   180 00:0933: 20 E3 08             jsr     move                    ;call move routine
+   181 00:0936: A9 C7                lda     #<DskBuf                ;set disk buffer
+   182 00:0938: A0 0B                ldy     #>DskBuf                ;address to local
+   183 00:093A: A2 1A                ldx     #26                     ;load PEM command for set disk buffer
+   184 00:093C: 20 03 01             jsr     PEM                     ;Call PEM
+   185 00:093F: A9 07                lda     #<dflfcb                ;Get address for default FCB
+   186 00:0941: A0 01                ldy     #>dflfcb                ;Get address high byte
+   187 00:0943: A2 0F                ldx     #15                     ;load PEM command for file open
+   188 00:0945: 20 03 01             jsr     PEM                     ;Call PEM
+   189 00:0948: C9 FF                cmp     #255                    ;check for error
+   190 00:094A: D0 06                bne     STUPOK                  ;jump ahead if none
+   191 00:094C: A9 3D                lda     #<nsubms                ;get address SUB file error msg
+   192 00:094E: A0 08                ldy     #>nsubms                ;get address high byte
+   193 00:0950: 80 A0                bra     ERROR                   ;branch to error handler
+   194 00:0952: A9 80        STUPOK  lda     #128                    ;else, set buffer pointer to
+   195 00:0954: 85 37                sta     sbp                     ;to force read later
+   196 00:0956: 60                   rts                             ;return to caller
+   197                        ;
+   198                        ;GetSrc - get single byte from source file
+   199 00:0957: A6 37        GetSrc  ldx     sbp                     ;get buffer index
+   200 00:0959: 10 14                bpl     USESBP                  ;use if 0-127
+   201 00:095B: A9 07                lda     #<DflFCB                ;else point to FCB
+   202 00:095D: A0 01                ldy     #>DflFCB                ;get high byte FCB
+  Sun Mar  6 2022  5:38                                                                                                    Page 5
+
+
+   203 00:095F: A2 14                ldx     #20                     ;get PEM command for read file
+   204 00:0961: 20 03 01             jsr     PEM                     ;call PEM
+   205 00:0964: C9 00                cmp     #0                      ;check return code
+   206 00:0966: F0 03                beq     CLRSBP                  ;if OK clear pointer
+   207 00:0968: A9 1A                lda     #eof                    ;else return end of file
+   208 00:096A: 60                   rts                             ;return to caller
+   209                        ;start record read at start of buffer
+   210 00:096B: 64 37        CLRSBP  stz     sbp                     ;clear sbp
+   211                        ;sbp is now 0 to 127 - we are ready to read byte
+   212 00:096D: A6 37                ldx     sbp                     ;get index
+   213 00:096F: E6 37        USESBP  inc     sbp                     ;bump for next
+   214 00:0971: BD C7 0B             lda     DskBuf,x                ;get char from buffer
+   215 00:0974: 85 36                sta     bbyte                   ;and save
+   216 00:0976: C9 0D                cmp     #cr                     ;see if carriage return
+   217 00:0978: D0 21                bne     BNOTCR                  ;if not skip ahead
+   218 00:097A: EE 23 0B             inc     LN3                     ;if is bump LSD of line number
+   219 00:097D: AD 23 0B             lda     LN3                     ;get digit
+   220 00:0980: C9 3A                cmp     #'9'+1                  ;see if over '9'
+   221 00:0982: 90 17                bcc     bnotcr                  ;not so use as is
+   222 00:0984: A9 30                lda     #'0'                    ;but if is reset to '0'
+   223 00:0986: 8D 23 0B             sta     ln3                     ;store to line number
+   224 00:0989: EE 22 0B             inc     ln2                     ;bump middle digit
+   225 00:098C: AD 22 0B             lda     ln2                     ;then get it
+   226 00:098F: C9 3A                cmp     #'9'+1                  ;and check it
+   227 00:0991: 90 08                bcc     bnotcr                  ;skip ahead if 0 to 9
+   228 00:0993: A9 30                lda     #'0'                    ;else reset middle digit
+   229 00:0995: 8D 22 0B             sta     ln2                     ;store to line number
+   230 00:0998: EE 21 0B             inc     ln1                     ;then bump LSD
+   231 00:099B: A5 36        BNOTCR  lda     bbyte                   ;get char back
+   232                        ;convert to upper case
+   233 00:099D: C9 61                cmp     #'a'                    ;not lower if a <
+   234 00:099F: 90 09                bcc     notlc
+   235 00:09A1: C9 7B                cmp     #'z'+1                  ;not lower if a >=
+   236 00:09A3: B0 05                bcs     notlc
+   237 00:09A5: 29 5F                and     #$5f                    ;convert to upper
+   238 00:09A7: 85 36                sta     bbyte                   ;save it
+   239 00:09A9: 60                   rts                             ;save some clock cycles
+   240 00:09AA: A5 36        NOTLC   lda     bbyte                   ;return it
+   241 00:09AC: 60           WRBFOK  rts                             ;return to caller
+   242                        ;
+   243                        ;WrtBuf - write disk buffer to disk file
+   244 00:09AD: A9 26        WrtBuf  lda     #<OutFCB                ;point to FCB
+   245 00:09AF: A0 0B                ldy     #>OutFCB                ;get high byte FCB
+   246 00:09B1: A2 15                ldx     #21                     ;load PEM command for write file
+   247 00:09B3: 20 03 01             jsr     PEM                     ;call PEM
+   248 00:09B6: C9 00                cmp     #0                      ;check for OK return
+   249 00:09B8: F0 F2                beq     WRBFOK                  ;if 0 OK
+   250 00:09BA: A9 52                lda     #<WrErMs                ;else get write error msg
+   251 00:09BC: A0 08                ldy     #>WrErMs                ;Get high byte msg
+   252 00:09BE: 4C F2 08             jmp     ERROR                   ;jump to error handler
+   253                        ;
+   254                        ;Routine that reads source file and does parameter replacement
+   255                        ;b is the character being processed
+   256 00:09C1: 9C 47 0C     FillRB  stz     rbuff                   ;put "stopper(0)" in buffer
+   257 00:09C4: A9 47                lda     #<rbuff
+   258 00:09C6: A0 0C                ldy     #>rbuff                 ;set rbp to start of rbuff
+   259 00:09C8: 85 38                sta     rbp                     ;rbp <-- rbuff
+   260 00:09CA: 84 39                sty     rbp+1
+   261 00:09CC: F7 3E                SMB7    readng                  ;set flag
+   262                        ;do while reading TRUE
+   263 00:09CE: FF 3E 02     DOLp00  BBS7    readng,L01              ;Branch if readng set
+   264 00:09D1: 80 D9                bra     WRBFOK                  ;if FALSE exit
+   265 00:09D3: 64 3A        L01     stz     rlen                    ;reset cmd length
+  Sun Mar  6 2022  5:38                                                                                                    Page 6
+
+
+   266                        ;do while (b<--getsource) <> eof and b <> cr
+   267 00:09D5: 20 57 09     DOLp01  jsr     GetSrc                  ;get character from source
+   268 00:09D8: 85 3F                sta     b                       ;save it
+   269                        ;now check if EOF or CR
+   270 00:09DA: C9 1A                cmp     #eof                    ;see if EOF
+   271 00:09DC: D0 02                bne     L02
+   272 00:09DE: 80 74                bra     XLp01                   ;if so done
+   273 00:09E0: C9 0D        L02     cmp     #cr                     ;now check for CR
+   274 00:09E2: D0 02                bne     IfLp02
+   275 00:09E4: 80 6E                bra     Xlp01                   ;if so done
+   276                        ;if b<>lf then
+   277 00:09E6: A5 3F        IFLP02  lda     b                       ;get saved
+   278 00:09E8: C9 0A                cmp     #lf                     ;see if LF
+   279 00:09EA: F0 E9                beq     DoLp01                  ;if so start again
+   280                        ;see if $
+   281 00:09EC: C9 24                cmp     #'$'
+   282 00:09EE: D0 3E                bne     Else3a                  ;is not so test ^
+   283                        ;if (b<--GetSrc) = $
+   284 00:09F0: 20 57 09             jsr     GetSrc                  ;get next
+   285 00:09F3: 85 3F                sta     b                       ;save it
+   286 00:09F5: C9 24                cmp     #'$'                    ;see if double
+   287 00:09F7: D0 05                bne     Else3b                  ;jump if not
+   288 00:09F9: 20 8C 0A             jsr     PutRBf                  ;insert single $
+   289 00:09FC: 80 D7                bra     DoLp01
+   290                        ;not double $
+   291 00:09FE: A5 3F        Else3b  lda     b                       ;prepare for subtract
+   292                        ;if (b <-- b-'0')
+   293 00:0A00: 38                   sec                             ;use subtraction
+   294 00:0A01: E9 30                sbc     #'0'                    ;subtract ASCII 0
+   295                        ;the previous line made b a parameter counter
+   296 00:0A03: 85 3F                sta     b                       ;save result (1 to 9)
+   297 00:0A05: C9 0A                cmp     #9+1                    ;carry clear if a < 10
+   298                        ;if result <= 9 then OK else a parameter error
+   299 00:0A07: 90 07                bcc     Else3c                  ;then continue
+   300 00:0A09: A9 8C                lda     #<PrmEMs                ;else parameter error
+   301 00:0A0B: A0 08                ldy     #>PrmEMs
+   302 00:0A0D: 4C F2 08             jmp     ERROR
+   303                        ;looks like parameter so find string b in sstrng
+   304 00:0A10: 64 3C        Else3c  stz     ssbp                    ;start at string start
+   305 00:0A12: 20 7F 0A     Else3G  jsr     DeBPrm                  ;find next non-blank
+   306                        ;do while b<>0
+   307 00:0A15: A5 3F        Else3d  lda     b                       ;get char
+   308 00:0A17: F0 09                beq     Else3e                  ;end if zero
+   309 00:0A19: C6 3F                dec     b                       ;b <-- b-1
+   310 00:0A1B: 20 68 0A     Else3f  jsr     notend                  ;scan
+   311 00:0A1E: D0 FB                bne     Else3f                  ;until end
+   312 00:0A20: 80 F0                bra     Else3g
+   313                        ;ready to copy substitute string to RBuff
+   314 00:0A22: 20 68 0A     Else3e  jsr     notend                  ;check for end
+   315 00:0A25: F0 AE                beq     DoLp01                  ;done if END
+   316 00:0A27: A5 3B                lda     ss                      ;get char
+   317 00:0A29: 20 8C 0A             jsr     PUTRBF                  ;insert in RBuff
+   318 00:0A2C: 80 F4                bra     Else3e                  ;loop for Do While
+   319                        ;
+   320                        ;else if b=^
+   321 00:0A2E: C9 5E        Else3a  cmp     #'^'                    ;see if control
+   322 00:0A30: D0 1B                bne     Else3j                  ;if not just copy
+   323 00:0A32: 20 57 09             jsr     GetSrc                  ;get next char
+   324 00:0A35: 38                   sec                             ;b <-- b-'A'
+   325 00:0A36: E9 41                sbc     #'A'
+   326 00:0A38: 85 3F                sta     b                       ;and save
+   327 00:0A3A: C9 1B                cmp     #27                     ;make sure 0 to Z
+   328 00:0A3C: 90 07                bcc     Else3h                  ;OK if < 26
+  Sun Mar  6 2022  5:38                                                                                                    Page 7
+
+
+   329 00:0A3E: A9 9C                lda     #<IvClMs                ;else invalid control char error
+   330 00:0A40: A0 08                ldy     #>IvClMs
+   331 00:0A42: 4C F2 08             jmp     error                   ;error exit
+   332 00:0A45: A5 3F        Else3h  lda     b                       ;get char back
+   333 00:0A47: 1A                   inc     a                       ;bump by one
+   334 00:0A48: 20 8C 0A             jsr     PutRBf                  ;put in output buffer
+   335 00:0A4B: 80 88                bra     DoLp01                  ;and loop
+   336                        ;was neither $ nor ^
+   337 00:0A4D: A5 3F        Else3j  lda     b
+   338 00:0A4F: 20 8C 0A             jsr     PutRBf                  ;so just transfer char
+   339 00:0A52: 80 81                bra     DOLp01                  ;then loop
+   340                        ;
+   341 00:0A54: A5 3F        XLp01   lda     b                       ;get character
+   342 00:0A56: C9 0D                cmp     #cr                     ;see if cr
+   343 00:0A58: F0 04                beq     L05                     ;if so go ahead
+   344 00:0A5A: 77 3E                RMB7    readng                  ;clear flag bit
+   345 00:0A5C: 80 02                BRA     L06                     ;branch to finish
+   346 00:0A5E: F7 3E        L05     SMB7    readng                  ;set flag bit
+   347 00:0A60: A5 3A        L06     lda     rlen                    ;store length
+   348 00:0A62: 20 8C 0A             jsr     PutRBf
+   349 00:0A65: 4C CE 09             jmp     DOLp00                  ;loop
+   350                        ;
+   351                        ;notend
+   352                        ;Return true if next char in substitute string not at end of string
+   353                        ;Also returns character in ss and if NOTEND returns tru pointer (ssbp)
+   354                        ;is advanced by one.
+   355 00:0A68: A6 3C        NOTEND  ldx     ssbp                    ;get pointer or index
+   356 00:0A6A: BD 47 0B             lda     sstrng,x                ;get character
+   357 00:0A6D: 85 3B                sta     ss                      ;save
+   358 00:0A6F: C9 20                cmp     #' '                    ;see if space
+   359 00:0A71: F0 09                beq     NotEnF                  ;if space is end so notend false
+   360 00:0A73: C9 00                cmp     #0                      ;see if zero
+   361 00:0A75: F0 07                beq     NBChar                  ;if 0 is end so notend false
+   362                        ;NOTEND is true
+   363 00:0A77: E6 3C                inc     ssbp                    ;ssbp <-- ssbp+1
+   364 00:0A79: A9 FF                lda     #255                    ;return true
+   365 00:0A7B: 60                   rts
+   366 00:0A7C: A9 00        NotEnF  lda     #0                      ;return false
+   367 00:0A7E: 60           NBChar  rts
+   368                        ;
+   369                        ;DeBPrm - move to next non-blank substitute string char
+   370 00:0A7F: A6 3C        DeBPrm  ldx     ssbp
+   371 00:0A81: BD 47 0B             lda     sstrng,x                ;get char
+   372 00:0A84: C9 20                cmp     #' '                    ;see if space
+   373 00:0A86: D0 F6                bne     NBChar                  ;done if not
+   374 00:0A88: E6 3C                inc     ssbp                    ;else bump index
+   375 00:0A8A: 80 F3                bra     DeBPrm                  ;and loop
+   376                        ;
+   377                        ;PutRBf
+   378                        ;INPUT: byte in A
+   379 00:0A8C: 85 3D        PutRBf  sta     PutRIn                  ;save inout character
+   380 00:0A8E: E6 38                inc     rbp                     ;bump pointer
+   381 00:0A90: D0 02                bne     rbpok                   ;skip high
+   382 00:0A92: E6 39                inc     rbp+1                   ;else bump high
+   383 00:0A94: 38           rbpok   sec
+   384 00:0A95: A5 38                lda     rbp                     ;check for too big
+   385 00:0A97: E9 4B                sbc     #<lastrb
+   386 00:0A99: A5 39                lda     rbp+1
+   387 00:0A9B: E9 2C                sbc     #>lastrb
+   388 00:0A9D: 90 07                bcc     RBPLEn                  ;OK if less than end + 1
+   389 00:0A9F: A9 63                lda     #<BfOvMs                ;else buffer overflow
+   390 00:0AA1: A0 08                ldy     #>BfOvMs
+   391 00:0AA3: 4C F2 08             jmp     ERROR
+  Sun Mar  6 2022  5:38                                                                                                    Page 8
+
+
+   392 00:0AA6: A5 3D        RBPLEn  lda     PutRIn                  ;get character back
+   393 00:0AA8: 92 38                sta     (rbp)                   ;put in buffer
+   394 00:0AAA: E6 3A                inc     rlen
+   395 00:0AAC: A5 3A                lda     rlen                    ;bump and get record length
+   396 00:0AAE: C9 7E                cmp     #126                    ;compare to max
+   397 00:0AB0: 90 CC                bcc     NBChar                  ;OK if <126
+   398 00:0AB2: A9 7B                lda     #<ToLnMs                ;else too long error
+   399 00:0AB4: A0 08                ldy     #>ToLnMs
+   400 00:0AB6: 4C F2 08             jmp     ERROR
+   401                        ;
+   402                        ;MkFile creates the active command file.
+   403 00:0AB9: A9 26        MkFile  lda     #<OutFCB                ;point to FCB
+   404 00:0ABB: A0 0B                ldy     #>OutFCB
+   405 00:0ABD: A2 13                ldx     #19                     ;PEM command for delete file
+   406 00:0ABF: 20 03 01             jsr     PEM                     ;delete it
+   407 00:0AC2: 9C 46 0B             stz     drec                    ;clear record number
+   408 00:0AC5: 9C 32 0B             stz     dext                    ;and extent
+   409 00:0AC8: A9 26                lda     #<OutFCB                ;point to FCB
+   410 00:0ACA: A0 0B                ldy     #>OutFCB
+   411 00:0ACC: A2 16                ldx     #22                     ;PEM command for create file
+   412 00:0ACE: 20 03 01             jsr     PEM
+   413 00:0AD1: C9 FF                cmp     #255                    ;check for MAKE error
+   414 00:0AD3: D0 07                bne     MAKEOK
+   415 00:0AD5: A9 B6                lda     #<DrFlMs                ;error - drive full
+   416 00:0AD7: A0 08                ldy     #>DrFlMs
+   417 00:0AD9: 4C F2 08             jmp     ERROR
+   418 00:0ADC: 20 16 0B     MAKEOK  jsr     GetRBf                  ;get character
+   419 00:0ADF: F0 21                beq     LSTCHR                  ;close out if zero
+   420 00:0AE1: 85 40                sta     ichar                   ;save
+   421 00:0AE3: 8D C7 0B             sta     DskBuf                  ;also put in disk buffer
+   422                        ; buff(i+1) <-- 0 and buff(i+2) <-- '$'
+   423 00:0AE6: AA                   tax                             ;make i an index
+   424 00:0AE7: 9E C8 0B             stz     DskBuf+1,x              ;insert 0 into buffer
+   425 00:0AEA: A9 24                lda     #'$'                    ;get $
+   426 00:0AEC: 9D C9 0B             sta     DskBuf+2,x
+   427                        ;do while i>0
+   428 00:0AEF: A6 40        DWIGT0  ldx     ichar                   ;see if > 0
+   429 00:0AF1: F0 0A                beq     IEq0                    ;i = 0
+   430 00:0AF3: 20 16 0B             jsr     GetRBf                  ;else keep getting
+   431 00:0AF6: 9D C7 0B             sta     DskBuf,x                ;and save
+   432 00:0AF9: C6 40                dec     ichar
+   433 00:0AFB: D0 F2                bne     DWIGT0                  ;and loop for more
+   434 00:0AFD: 20 AD 09     IEQ0    jsr     WrtBuf
+   435 00:0B00: 80 DA                bra     MAKEOK
+   436 00:0B02: A9 26        LSTCHR  lda     #<OutFCB                ;point to FCB
+   437 00:0B04: A0 0B                ldy     #>OutFCB
+   438 00:0B06: A2 10                ldx     #16                     ;PEM command for close file
+   439 00:0B08: 20 03 01             jsr     PEM
+   440 00:0B0B: C9 FF                cmp     #255
+   441 00:0B0D: D0 11                bne     OKCLS
+   442 00:0B0F: A9 C5                lda     #<NoClMs                ;close error
+   443 00:0B11: A0 08                ldy     #>NoClMs
+   444 00:0B13: 4C F2 08             jmp     ERROR
+   445                        ;
+   446                        ;GetRBf after rbp <-- rbp-1
+   447 00:0B16: A5 38        GetRBf  lda     rbp                     ;get low byte
+   448 00:0B18: D0 02                bne     skp_rbp                 ;skip if zero
+   449 00:0B1A: C6 39                dec     rbp+1                   ;decrement high byte
+   450 00:0B1C: C6 38        skp_rbp dec     rbp                     ;decrement low byte
+   451 00:0B1E: B2 38                lda     (rbp)                   ;get character
+   452 00:0B20: 60           OKCLS   rts
+   453                        ;
+   454                        ;line number string
+  Sun Mar  6 2022  5:38                                                                                                    Page 9
+
+
+   455 00:0B21: 30 30 31 20  LneNum  .DB     '001 $'
+       00:0B25: 24 
+   456             00000B21   LN1     .EQU    LneNum
+   457             00000B22   LN2     .EQU    LneNum+1
+   458             00000B23   LN3     .EQU    LneNum+2
+   459                        ;Output FCB
+   460 00:0B26: 00           OutFCB  .DB     0
+   461 00:0B27: 24 24 24 20          .DB     '$$$     SUB'
+       00:0B2B: 20 20 20 20 
+       00:0B2F: 53 55 42 
+   462                        ;extent
+   463 00:0B32: 00           dext    .DB     0
+   464 00:0B33: 00 00 00             .DB     0,0,0
+   465 00:0B36:                      DEFS    16
+   466                        ;record number for OutFCB
+   467 00:0B46: 00           drec    .DB     0
+   468                        ;substitute string
+   469                        sstrng
+   470 00:0B47:                      DEFS    128
+   471                        ;disk buffer - replaces default
+   472                        DskBuf
+   473 00:0BC7:                      DEFS    128
+   474                        ;read buffer
+   475                        ;baseline allows 32 command lines at 4096 bytes total
+   476                        ;If desired this can be increased.
+   477                        ;
+   478             00000C47   rbuff   .EQU    *
+   479                        ;
+   480             00002C4B   lastrb  .EQU    *+BufLng
+   481                        ;
+   482                                ENDS
+   483                        ;
+   484                                END
+
+
+      Lines assembled: 484
+      Errors: 0
